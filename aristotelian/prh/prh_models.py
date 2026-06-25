@@ -47,6 +47,20 @@ def get_models(modelset: str, modality: str = "all") -> Tuple[List[str], List[st
             "vit_large_patch14_clip_224.laion2b_ft_in12k",
             "vit_huge_patch14_clip_224.laion2b_ft_in12k",
         ]
+    elif modelset == "min":
+        # Minimal scale-spanning set for a fast single-GPU PRH reproduction.
+        # Language: Bloomz family (560M -> 1.7B) gives a clean scaling axis.
+        # Vision: augreg_in21k ViTs (tiny -> base) span scale and download fast.
+        llm_models = [
+            "bigscience/bloomz-560m",
+            "bigscience/bloomz-1b1",
+            "bigscience/bloomz-1b7",
+        ]
+        lvm_models = [
+            "vit_tiny_patch16_224.augreg_in21k",
+            "vit_small_patch16_224.augreg_in21k",
+            "vit_base_patch16_224.augreg_in21k",
+        ]
     elif modelset == "test":
         llm_models = [
             "allenai/OLMo-1B-hf",
