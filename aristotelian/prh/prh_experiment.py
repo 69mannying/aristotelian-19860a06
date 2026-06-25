@@ -104,24 +104,69 @@ def _extract_vision_features(
     batch_size: int,
     pool: str,
 ) -> Tuple[torch.Tensor, int]:
+    """Per-block ViT features via forward hooks.
+
+    The original implementation used torchvision's FX `create_feature_extractor`
+    with `blocks.{i}.add_1` return nodes. That FX symbolic trace is incompatible
+    with recent timm ViT attention (passes `is_causal` as a Proxy ->
+    `scaled_dot_product_attention` TypeError). We instead register forward hooks
+    on each transformer block, capturing the post-block residual output — exactly
+    the `blocks.{i}.add_1` tensor — without any tracing.
+    """
     model = load_vision_model(model_name, device=device)
     num_params = int(sum(p.numel() for p in model.parameters()))
     transform = create_transform(
         **resolve_data_config(model.pretrained_cfg, model=model)
     )
-    if "vit" in model_name:
-        return_nodes = [f"blocks.{i}.add_1" for i in range(len(model.blocks))]
-    else:
+    if "vit" not in model_name:
         raise NotImplementedError(f"unknown model {model_name}")
-    feat_model = create_feature_extractor(model, return_nodes=return_nodes)
-    layers = collect_vision_activations(
-        images,
-        model=feat_model,
-        device=device,
-        batch_size=batch_size,
-        pool=pool,
-        transform=transform,
-    )
+
+    blocks = model.blocks
+    captured: list[torch.Tensor] = []
+
+    def _hook(_module, _inp, output):
+        captured.append(output)
+
+    handles = [blk.register_forward_hook(_hook) for blk in blocks]
+
+    imgs_list = [transform(img) for img in images]
+    batches = [
+        imgs_list[i : i + batch_size] for i in range(0, len(imgs_list), batch_size)
+    ]
+
+    n_layers = len(blocks)
+    acc: list[list[torch.Tensor]] | None = None
+    try:
+        for batch in batches:
+            captured.clear()
+            x = torch.stack(batch).to(device)
+            with torch.no_grad():
+                model(x)
+            assert len(captured) == n_layers, (
+                f"expected {n_layers} block outputs, got {len(captured)}"
+            )
+            if acc is None:
+                acc = [[] for _ in range(n_layers)]
+            for li, feat in enumerate(captured):
+                # feat: [B, tokens, d]; pool to [B, d]
+                if feat.dim() == 3:
+                    if pool == "cls":
+                        pooled = feat[:, 0, :]
+                    elif pool in ("avg", "mean"):
+                        pooled = feat.mean(dim=1)
+                    elif pool == "last":
+                        pooled = feat[:, -1, :]
+                    else:
+                        raise ValueError(f"unknown pooling mode: {pool}")
+                else:
+                    pooled = feat
+                acc[li].append(pooled.detach().float().cpu())
+    finally:
+        for h in handles:
+            h.remove()
+
+    assert acc is not None, "no images provided to vision extractor"
+    layers = [torch.cat(chunks, dim=0).numpy() for chunks in acc]
     return _stack_layers(layers), num_params
 
 
