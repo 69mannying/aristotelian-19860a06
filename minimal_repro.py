@@ -140,13 +140,18 @@ def main() -> None:
     # E2 — DEPTH confounder under the null (H0: independent multi-layer reps)
     # =====================================================================
     log("\n[E2] DEPTH confounder under H0 (independent reps, max over layer pairs)")
-    log("     fixed n=64, d=256 (d/n=4); sweep #layers L. Average over trials.")
+    log("     fixed n=256, d=32 (d/n=0.125 so per-pair CKA is small); sweep #layers L.")
+    log("     The 'look-elsewhere' max over L*L pairs inflates raw similarity ~sqrt(log L).")
+    # smaller, fast-but-faithful budget for the O(L^2) depth sweep
+    K2 = int(os.environ.get("REPRO_K2", "100"))
+    trials2 = int(os.environ.get("REPRO_TRIALS2", "10"))
+    log(f"     (K2={K2} perms, trials2={trials2})")
     log(f"     {'L':>4} | {'raw_maxCKA':>12} {'calibrated':>12} {'p_value':>9}")
-    n2, d2 = 64, 256
+    n2, d2 = 256, 32
     e2_rows = []
-    for L in [2, 8, 32, 64]:
+    for L in [2, 8, 16, 32]:
         raws, cals, pvals = [], [], []
-        for t in range(trials):
+        for t in range(trials2):
             g = torch.Generator(device=device).manual_seed(seed + 13 * L + t)
             Xl = [torch.randn(n2, d2, generator=g, device=device) for _ in range(L)]
             Yl = [torch.randn(n2, d2, generator=g, device=device) for _ in range(L)]
@@ -158,7 +163,7 @@ def main() -> None:
             raws.append(float(S.max()))
             cg = torch.Generator(device=device).manual_seed(seed + 5 * L + t)
             scal, p, _ = calibrate_layers(Xl, Yl, linear_cka, agg="max",
-                                          K=K, alpha=alpha, generator=cg)
+                                          K=K2, alpha=alpha, generator=cg)
             cals.append(float(scal))
             pvals.append(float(p))
         raw_m = sum(raws) / len(raws)
@@ -269,7 +274,7 @@ def main() -> None:
                    f"Confounder reproduced & removed: "
                    f"{'YES' if e1_raw_inflates and e1_cal_flat else 'NO'}.\n")
 
-    eval_md.append("\n## E2 — Depth confounder (H0: independent layers, max-agg), n=64 d=256\n")
+    eval_md.append("\n## E2 — Depth confounder (H0: independent layers, max-agg), n=256 d=32\n")
     eval_md.append("| L (layers) | raw max-CKA | calibrated | p |")
     eval_md.append("|------------|-------------|------------|---|")
     for r in e2_rows:
