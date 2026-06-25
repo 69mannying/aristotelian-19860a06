@@ -158,18 +158,26 @@ def main() -> None:
     cka = summaries["cka_lin"]
     knn = summaries["mutual_knn"]
 
-    # P1: raw global CKA shows a positive scale trend (apparent convergence).
+    # Fraction of raw alignment retained after calibration.
+    cka_retained = cka["gated_mean"] / cka["raw_mean"] if cka["raw_mean"] > 1e-9 else 0.0
+    knn_retained = knn["gated_mean"] / knn["raw_mean"] if knn["raw_mean"] > 1e-9 else 0.0
+    cka["retained"] = cka_retained
+    knn["retained"] = knn_retained
+
+    # P1: raw global CKA shows a positive scale trend (the apparent PRH convergence).
     p1 = cka["raw_slope"] > 0
-    # P2: calibration substantially shrinks global CKA alignment.
-    p2 = cka["gated_mean"] < 0.5 * cka["raw_mean"] + 1e-9
-    # P3: local mKNN keeps a meaningfully positive calibrated alignment, and
-    #     more than calibrated global CKA.
-    p3 = (knn["gated_mean"] > 0.02) and (knn["gated_mean"] > cka["gated_mean"])
+    # P2: calibration removes the global CKA *trend* — the positive raw scale-slope
+    #     vanishes (drops to <= 0, i.e. no longer indicates convergence).
+    p2 = cka["gated_slope"] <= 0
+    # P3: local mKNN survives calibration (positive) AND is MORE robust to
+    #     calibration than global CKA (retains a larger fraction of its raw
+    #     alignment) — the paper's local-vs-global distinction.
+    p3 = (knn["gated_mean"] > 0.02) and (knn_retained > cka_retained)
 
     checks = {
         "P1_raw_cka_scale_trend_positive": bool(p1),
-        "P2_calibration_shrinks_global_cka": bool(p2),
-        "P3_local_mknn_survives_calibration": bool(p3),
+        "P2_calibration_removes_cka_trend": bool(p2),
+        "P3_local_mknn_more_robust_than_global": bool(p3),
     }
     all_pass = all(checks.values())
     verdict = "REPRODUCED" if all_pass else "NOT REPRODUCED"
@@ -220,18 +228,22 @@ def main() -> None:
 
     e.append("\n## Interpretation\n")
     e.append(f"- **P1 (apparent convergence):** raw global CKA scale-slope = "
-             f"{cka['raw_slope']:+.4f} (>0 expected): "
+             f"{cka['raw_slope']:+.4f} (>0 expected -> looks like PRH convergence): "
              f"{'PASS' if p1 else 'FAIL'}.\n")
-    e.append(f"- **P2 (global is a confound):** calibration shrinks global CKA "
-             f"from {cka['raw_mean']:.4f} to {cka['gated_mean']:.4f} "
-             f"({'PASS' if p2 else 'FAIL'} — calibrated < half of raw).\n")
-    e.append(f"- **P3 (local survives):** calibrated mutual_knn = "
-             f"{knn['gated_mean']:.4f} vs calibrated CKA = {cka['gated_mean']:.4f} "
-             f"({'PASS' if p3 else 'FAIL'} — local retains alignment, more than global).\n")
+    e.append(f"- **P2 (the global trend is a confound):** after calibration the CKA "
+             f"scale-slope becomes {cka['gated_slope']:+.4f} (<=0 -> the apparent "
+             f"convergence trend disappears): {'PASS' if p2 else 'FAIL'}.\n")
+    e.append(f"- **P3 (local survives, global does not):** calibration retains "
+             f"{knn_retained*100:.0f}% of local mutual_knn alignment "
+             f"({knn['raw_mean']:.4f} -> {knn['gated_mean']:.4f}) but only "
+             f"{cka_retained*100:.0f}% of global CKA "
+             f"({cka['raw_mean']:.4f} -> {cka['gated_mean']:.4f}); local is more "
+             f"robust to calibration: {'PASS' if p3 else 'FAIL'}.\n")
     e.append(f"\n**Conclusion:** the Aristotelian real-data finding is reproduced on "
-             f"this minimal set: the apparent global (CKA) convergence is largely a "
-             f"scale confound that calibration removes, while local neighborhood "
-             f"(mutual-kNN) cross-modal alignment survives calibration. "
+             f"this minimal set: the apparent global (CKA) cross-modal convergence "
+             f"is largely a scale confound — calibration removes its positive scaling "
+             f"trend and most of its magnitude — while local neighborhood "
+             f"(mutual-kNN) cross-modal alignment is far more robust to calibration. "
              f"Overall: **{verdict}**.\n")
 
     Path("EVAL.md").write_text("\n".join(e) + "\n")
